@@ -40,14 +40,12 @@ public final class BaseHiderPlugin extends JavaPlugin implements Listener, Comma
     private void loadBases() {
         ConfigurationSection section = getConfig().getConfigurationSection("bases");
         if (section == null) return;
-
         for (String key : section.getKeys(false)) {
             try {
                 UUID uuid = UUID.fromString(key);
                 String path = "bases." + key;
                 String worldName = getConfig().getString(path + ".world");
                 if (worldName == null || Bukkit.getWorld(worldName) == null) continue;
-
                 bases.put(uuid, new Location(Bukkit.getWorld(worldName),
                         getConfig().getInt(path + ".x"),
                         getConfig().getInt(path + ".y"),
@@ -108,7 +106,6 @@ public final class BaseHiderPlugin extends JavaPlugin implements Listener, Comma
 
     @EventHandler
     public void onTeleport(PlayerTeleportEvent event) {
-        // Bewegungen durch Teleport müssen ebenfalls Nachrichten auslösen.
         Bukkit.getScheduler().runTask(this, () -> updatePlayer(event.getPlayer(), false));
     }
 
@@ -117,7 +114,6 @@ public final class BaseHiderPlugin extends JavaPlugin implements Listener, Comma
         Player joining = event.getPlayer();
         Bukkit.getScheduler().runTask(this, () -> updatePlayer(joining, false));
 
-        // Bereits versteckte Spieler auch für den neu beigetretenen Spieler verstecken.
         for (Map.Entry<UUID, Zone> entry : zones.entrySet()) {
             if (!isHidden(entry.getValue())) continue;
             Player hidden = Bukkit.getPlayer(entry.getKey());
@@ -143,7 +139,6 @@ public final class BaseHiderPlugin extends JavaPlugin implements Listener, Comma
         zones.put(uuid, newZone);
     }
 
-    /** Prüft ausschließlich die eigene Base dieses Spielers. */
     private Zone calculateZone(Player player) {
         Location location = player.getLocation();
         Location base = bases.get(player.getUniqueId());
@@ -171,35 +166,47 @@ public final class BaseHiderPlugin extends JavaPlugin implements Listener, Comma
             return;
         }
 
-        // Nur beim Hineingehen von außen in den gelben Ring.
-        if (oldZone == Zone.OUTSIDE && newZone == Zone.YELLOW) {
-            player.sendMessage(ChatColor.YELLOW + "Du bist gleich unsichtbar.");
-        }
+        if (newZone == oldZone) return;
 
-        // Nur beim Hineingehen von gelb in den blauen Ring.
-        if (oldZone == Zone.YELLOW && newZone == Zone.BLUE) {
-            player.sendMessage(ChatColor.BLUE + "Du bist gleich sichtbar.");
-        }
-
-        // Betreten des inneren Bereichs.
+        // Nach innen: nur beim tatsächlichen Betreten des inneren Bereichs grün.
         if (newZone == Zone.HIDDEN && oldZone != Zone.HIDDEN) {
             hidePlayer(player);
             player.sendMessage(ChatColor.GREEN + "Du bist jetzt unsichtbar.");
             return;
         }
 
-        // Ab 25 beim Herausgehen: sichtbar und rote Nachricht.
-        if (oldZone == Zone.BLUE && (newZone == Zone.YELLOW || newZone == Zone.OUTSIDE)) {
+        // Nach außen aus dem inneren Bereich: ab 25 sichtbar, rot.
+        if (oldZone == Zone.HIDDEN && newZone == Zone.BLUE) {
+            player.sendMessage(ChatColor.BLUE + "Du bist gleich sichtbar.");
+            return;
+        }
+
+        // Bei 25: aus der blauen Zone in die gelbe Zone, sichtbar und rot.
+        if (oldZone == Zone.BLUE && newZone == Zone.YELLOW) {
             showPlayer(player);
             player.sendMessage(ChatColor.RED + "Du bist jetzt sichtbar.");
             return;
         }
 
-        // Direkter Sprung aus dem inneren Bereich nach draußen.
-        if (oldZone == Zone.HIDDEN && (newZone == Zone.YELLOW || newZone == Zone.OUTSIDE)) {
+        // Falls mehrere Blöcke übersprungen werden.
+        if ((oldZone == Zone.HIDDEN || oldZone == Zone.BLUE)
+                && newZone == Zone.OUTSIDE) {
+            if (oldZone == Zone.HIDDEN) {
+                player.sendMessage(ChatColor.BLUE + "Du bist gleich sichtbar.");
+            }
             showPlayer(player);
             player.sendMessage(ChatColor.RED + "Du bist jetzt sichtbar.");
+            return;
         }
+
+        // Von außen in den gelben Bereich bei 30: gelbe Warnung.
+        if (oldZone == Zone.OUTSIDE && newZone == Zone.YELLOW) {
+            player.sendMessage(ChatColor.YELLOW + "Du bist gleich unsichtbar.");
+            return;
+        }
+
+        // Von gelb nach blau hinein: keine Meldung; blau kommt erst beim Erreichen
+        // der Grenze 20, also beim Übergang HIDDEN -> BLUE nach außen.
     }
 
     private boolean isHidden(Zone zone) {
