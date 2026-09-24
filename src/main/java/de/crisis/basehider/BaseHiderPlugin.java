@@ -13,6 +13,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.HashMap;
@@ -39,12 +40,14 @@ public final class BaseHiderPlugin extends JavaPlugin implements Listener, Comma
     private void loadBases() {
         ConfigurationSection section = getConfig().getConfigurationSection("bases");
         if (section == null) return;
+
         for (String key : section.getKeys(false)) {
             try {
                 UUID uuid = UUID.fromString(key);
                 String path = "bases." + key;
                 String worldName = getConfig().getString(path + ".world");
                 if (worldName == null || Bukkit.getWorld(worldName) == null) continue;
+
                 bases.put(uuid, new Location(Bukkit.getWorld(worldName),
                         getConfig().getInt(path + ".x"),
                         getConfig().getInt(path + ".y"),
@@ -61,6 +64,7 @@ public final class BaseHiderPlugin extends JavaPlugin implements Listener, Comma
             sender.sendMessage("Dieser Befehl kann nur von einem Spieler benutzt werden.");
             return true;
         }
+
         UUID uuid = player.getUniqueId();
         if (command.getName().equalsIgnoreCase("setbase")) {
             Location location = player.getLocation();
@@ -73,8 +77,10 @@ public final class BaseHiderPlugin extends JavaPlugin implements Listener, Comma
             bases.put(uuid, location.clone());
             zones.remove(uuid);
             player.sendMessage(ChatColor.GREEN + "Deine Base wurde gesetzt.");
+            updatePlayer(player, true);
             return true;
         }
+
         if (command.getName().equalsIgnoreCase("removebase")) {
             if (!bases.containsKey(uuid)) {
                 player.sendMessage(ChatColor.YELLOW + "Du hast keine Base gesetzt.");
@@ -95,9 +101,34 @@ public final class BaseHiderPlugin extends JavaPlugin implements Listener, Comma
     public void onMove(PlayerMoveEvent event) {
         Location from = event.getFrom();
         Location to = event.getTo();
-        if (to == null || (from.getBlockX() == to.getBlockX() && from.getBlockZ() == to.getBlockZ())) return;
+        if (to == null || (from.getBlockX() == to.getBlockX()
+                && from.getBlockZ() == to.getBlockZ())) return;
+        updatePlayer(event.getPlayer(), false);
+    }
 
-        Player player = event.getPlayer();
+    @EventHandler
+    public void onTeleport(PlayerTeleportEvent event) {
+        // Bewegungen durch Teleport müssen ebenfalls Nachrichten auslösen.
+        Bukkit.getScheduler().runTask(this, () -> updatePlayer(event.getPlayer(), false));
+    }
+
+    @EventHandler
+    public void onJoin(PlayerJoinEvent event) {
+        Player joining = event.getPlayer();
+        Bukkit.getScheduler().runTask(this, () -> updatePlayer(joining, false));
+
+        // Bereits versteckte Spieler auch für den neu beigetretenen Spieler verstecken.
+        for (Map.Entry<UUID, Zone> entry : zones.entrySet()) {
+            if (!isHidden(entry.getValue())) continue;
+            Player hidden = Bukkit.getPlayer(entry.getKey());
+            if (hidden != null && hidden.isOnline() && !hidden.equals(joining)
+                    && !joining.hasPermission("basehider.bypass")) {
+                joining.hidePlayer(this, hidden);
+            }
+        }
+    }
+
+    private void updatePlayer(Player player, boolean baseWasJustSet) {
         UUID uuid = player.getUniqueId();
         Zone oldZone = zones.getOrDefault(uuid, Zone.OUTSIDE);
 
@@ -107,15 +138,17 @@ public final class BaseHiderPlugin extends JavaPlugin implements Listener, Comma
             return;
         }
 
-        // Wichtig: Nur die Base dieses Spielers wird geprüft.
-        Zone newZone = calculateZone(player, to);
-        handleTransition(player, oldZone, newZone);
+        Zone newZone = calculateZone(player);
+        handleTransition(player, oldZone, newZone, baseWasJustSet);
         zones.put(uuid, newZone);
     }
 
-    private Zone calculateZone(Player player, Location location) {
+    /** Prüft ausschließlich die eigene Base dieses Spielers. */
+    private Zone calculateZone(Player player) {
+        Location location = player.getLocation();
         Location base = bases.get(player.getUniqueId());
-        if (base == null || base.getWorld() == null || !base.getWorld().equals(location.getWorld())) {
+        if (base == null || base.getWorld() == null
+                || !base.getWorld().equals(location.getWorld())) {
             return Zone.OUTSIDE;
         }
 
@@ -129,28 +162,40 @@ public final class BaseHiderPlugin extends JavaPlugin implements Listener, Comma
         return Zone.OUTSIDE;
     }
 
-    private void handleTransition(Player player, Zone oldZone, Zone newZone) {
+    private void handleTransition(Player player, Zone oldZone, Zone newZone, boolean baseWasJustSet) {
+        if (baseWasJustSet) {
+            if (newZone == Zone.HIDDEN) {
+                hidePlayer(player);
+                player.sendMessage(ChatColor.GREEN + "Du bist jetzt unsichtbar.");
+            }
+            return;
+        }
+
+        // Nur beim Hineingehen von außen in den gelben Ring.
         if (oldZone == Zone.OUTSIDE && newZone == Zone.YELLOW) {
             player.sendMessage(ChatColor.YELLOW + "Du bist gleich unsichtbar.");
         }
 
+        // Nur beim Hineingehen von gelb in den blauen Ring.
         if (oldZone == Zone.YELLOW && newZone == Zone.BLUE) {
             player.sendMessage(ChatColor.BLUE + "Du bist gleich sichtbar.");
         }
 
+        // Betreten des inneren Bereichs.
         if (newZone == Zone.HIDDEN && oldZone != Zone.HIDDEN) {
             hidePlayer(player);
             player.sendMessage(ChatColor.GREEN + "Du bist jetzt unsichtbar.");
             return;
         }
 
-        // Bei 25 Blöcken wird der Spieler sichtbar und erhält die rote Nachricht.
+        // Ab 25 beim Herausgehen: sichtbar und rote Nachricht.
         if (oldZone == Zone.BLUE && (newZone == Zone.YELLOW || newZone == Zone.OUTSIDE)) {
             showPlayer(player);
             player.sendMessage(ChatColor.RED + "Du bist jetzt sichtbar.");
             return;
         }
 
+        // Direkter Sprung aus dem inneren Bereich nach draußen.
         if (oldZone == Zone.HIDDEN && (newZone == Zone.YELLOW || newZone == Zone.OUTSIDE)) {
             showPlayer(player);
             player.sendMessage(ChatColor.RED + "Du bist jetzt sichtbar.");
@@ -178,19 +223,6 @@ public final class BaseHiderPlugin extends JavaPlugin implements Listener, Comma
         }
         String oldName = originalTabNames.remove(target.getUniqueId());
         target.setPlayerListName(oldName == null ? target.getName() : oldName);
-    }
-
-    @EventHandler
-    public void onJoin(PlayerJoinEvent event) {
-        Player joining = event.getPlayer();
-        for (Map.Entry<UUID, Zone> entry : zones.entrySet()) {
-            if (!isHidden(entry.getValue())) continue;
-            Player hidden = Bukkit.getPlayer(entry.getKey());
-            if (hidden != null && hidden.isOnline() && !hidden.equals(joining)
-                    && !joining.hasPermission("basehider.bypass")) {
-                joining.hidePlayer(this, hidden);
-            }
-        }
     }
 
     @EventHandler
