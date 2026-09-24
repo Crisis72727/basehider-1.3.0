@@ -1,0 +1,25 @@
+name: BaseHider
+version: 1.3.0
+main: de.crisis.basehider.BaseHiderPlugin
+api-version: '1.21'
+
+commands:
+  setbase:
+    description: Setzt deine eigene Base.
+    usage: /setbase
+    permission: basehider.setbase
+  removebase:
+    description: Entfernt deine eigene Base.
+    usage: /removebase
+    permission: basehider.removebase
+
+permissions:
+  basehider.setbase:
+    description: Erlaubt das Setzen der eigenen Base.
+    default: true
+  basehider.removebase:
+    description: Erlaubt das Entfernen der eigenen Base.
+    default: true
+  basehider.bypass:
+    description: Kann versteckte Spieler sehen.
+    default: op

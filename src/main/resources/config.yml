@@ -1,0 +1,7 @@
+# BaseHider 1.3.0
+# Quadratische Zonen um die eigene Base des jeweiligen Spielers.
+# 0-20: unsichtbar
+# >20-<25: blau, noch unsichtbar
+# 25-30: gelb, sichtbar
+# >30: sichtbar
+# Basen werden automatisch unter bases gespeichert.
